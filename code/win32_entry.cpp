@@ -12,6 +12,5 @@
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine, int nCmdShow)
 {
     MessageBoxA(0, "This has been fun", "The start of a new journey", MB_OK|MB_ICONINFORMATION);
-
     return 0;
 }

@@ -5,4 +5,3 @@ mkdir ..\build
 pushd ..\build
 clang++ ..\code\win32_entry.cpp -o win32_entry.exe
 popd
-

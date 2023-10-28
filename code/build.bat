@@ -3,5 +3,5 @@ REM this is used instead of CMake, MakeGNU, Ninja, etc. Build tools are used to 
 
 mkdir ..\build
 pushd ..\build
-clang++ ..\code\win32_entry.cpp -o win32_entry.exe
+clang++ ..\code\win32_entry.cpp -lgdi32 -o win32_entry.exe
 popd

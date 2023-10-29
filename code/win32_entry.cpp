@@ -8,26 +8,94 @@
 */
 
 #include <windows.h>
+
+//Local persists should only be used for debugging
+//Internal = only this source file (translation unit) can modify the value
+#define local_persist static
+#define internal static
+#define global_variable static
+
+//Statics are initialized to zero by default
+global_variable bool Running;
+
+global_variable BITMAPINFO BitmapInfo;
+global_variable void *BitmapMemory;
+global_variable HBITMAP BitmapHandle;
+global_variable HDC BitmapDeviceContext;
+  
+//Create backbuffer
+internal void Win32ResizeDIBSection(int Width, int Height)
+{
+    //TODO(Robin) bulletproof this.
+    //Maybe don't free first, free after, then free first if that fails
+    if(BitmapHandle)
+    {
+        DeleteObject(BitmapHandle);
+    }
+
+    if (!BitmapDeviceContext)
+    {
+        //TODO(Robin) Should we recreate these under certain special circumstances?
+        BitmapDeviceContext = CreateCompatibleDC(0);
+    }
+    
+    BitmapInfo.bmiHeader.biSize = sizeof(BitmapInfo.bmiHeader);
+    BitmapInfo.bmiHeader.biWidth = Width;
+    BitmapInfo.bmiHeader.biHeight = Height;
+    BitmapInfo.bmiHeader.biPlanes = 1;
+    BitmapInfo.bmiHeader.biBitCount = 32;
+    BitmapInfo.bmiHeader.biCompression = BI_RGB;
+
+    //We have something we want to blt to the screen, we have to make the DeviceContext compatible with the screen's DeviceContext even though we are not drawing to the screen's DeviceContext
+
+    //Allocate bitmap memory
+    BitmapHandle = CreateDIBSection(BitmapDeviceContext, &BitmapInfo, DIB_RGB_COLORS, &BitmapMemory, 0, 0);
+    
+}
+
+//Rectangle to rectangle copy, scaling due to differing sizes
+internal void Win32UpdateWindow(HDC DeviceContext, int X, int Y, int Width, int Height)
+{
+    StretchDIBits(DeviceContext, 
+                X, Y, Width, Height,
+                X, Y, Width, Height,
+                BitmapMemory,
+                &BitmapInfo,
+                DIB_RGB_COLORS,
+                SRCCOPY);
+}
+                                
+                                
+
+                                
+
+
 //In windows, function signatures only depend on the types you are trying to pass, not the actual name of the parameter. You can rename it however you like.
-//This is a function that will be called when windows needs to send something to it to have it do something
-LRESULT MainWindowCallback(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
+//This is a function that will be called when windows needs to send us a message
+LRESULT Win32MainWindowCallback(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
 {
     LRESULT Result = 0;
     switch(Message)
     {
         case WM_SIZE:
         {
-            OutputDebugStringA("WM_SIZE\n");
+            RECT ClientRect;
+            GetClientRect(Window, &ClientRect);
+            int Height = ClientRect.bottom - ClientRect.top;
+            int Width = ClientRect.right - ClientRect.left;
+            Win32ResizeDIBSection(Width, Height);
         } break;
     
         case WM_DESTROY:
         {
-            OutputDebugStringA("WM_DESTROY\n");
+            //TODO(Robin) Handle this a error - recreate window?
+            Running = false;
         } break;
 
         case WM_CLOSE:
         {
-            OutputDebugStringA("WM_CLOSE\n");
+            //TODO(Robin) Handle this with a message to the user?
+            Running = false;
         } break;
 
         case WM_ACTIVATEAPP:
@@ -43,6 +111,7 @@ LRESULT MainWindowCallback(HWND Window, UINT Message, WPARAM WParam, LPARAM LPar
             int Y = Paint.rcPaint.top;
             int Height = Paint.rcPaint.bottom - Paint.rcPaint.top;
             int Width = Paint.rcPaint.right - Paint.rcPaint.left;
+            Win32UpdateWindow(DeviceContext, X, Y, Width, Height);
             PatBlt(DeviceContext, X, Y, Width, Height, WHITENESS);
 
             EndPaint(Window, &Paint);
@@ -62,7 +131,7 @@ int WINAPI WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PSTR CommandLine,
     WNDCLASSA WindowClass = {};
     
         WindowClass.style = CS_OWNDC|CS_HREDRAW|CS_VREDRAW;
-        WindowClass.lpfnWndProc = MainWindowCallback;
+        WindowClass.lpfnWndProc = Win32MainWindowCallback;
         WindowClass.hInstance = Instance;
         //HICON     hIcon;
         WindowClass.lpszClassName = "Midnight Madness";
@@ -88,7 +157,8 @@ int WINAPI WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PSTR CommandLine,
             if(WindowHandle)
             {
                 //We enter an infinite loop
-                for(;;)
+                Running = true;
+                while(Running)
                 {
                     //We ask windows to give us the next message in the message queue
                     MSG Message;

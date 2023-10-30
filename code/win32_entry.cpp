@@ -8,9 +8,14 @@
 */
 
 #include <windows.h>
+#include <stdio.h>
 
 //Local persists should only be used for debugging
 //Internal = only this source file (translation unit) can modify the value
+
+typedef unsigned char uint8;
+typedef unsigned int uint32;
+
 #define local_persist static
 #define internal static
 #define global_variable static
@@ -20,56 +25,80 @@ global_variable bool Running;
 
 global_variable BITMAPINFO BitmapInfo;
 global_variable void *BitmapMemory;
-global_variable HBITMAP BitmapHandle;
-global_variable HDC BitmapDeviceContext;
+global_variable int BitmapWidth;
+global_variable int BitmapHeight;
   
 //Create backbuffer
 internal void Win32ResizeDIBSection(int Width, int Height)
 {
-    //TODO(Robin) bulletproof this.
-    //Maybe don't free first, free after, then free first if that fails
-    if(BitmapHandle)
+    if (BitmapMemory)
     {
-        DeleteObject(BitmapHandle);
+        VirtualFree(BitmapMemory, 0, MEM_RELEASE);
     }
 
-    if (!BitmapDeviceContext)
-    {
-        //TODO(Robin) Should we recreate these under certain special circumstances?
-        BitmapDeviceContext = CreateCompatibleDC(0);
-    }
-    
+    BitmapWidth = Width;
+    BitmapHeight = Height;
+
     BitmapInfo.bmiHeader.biSize = sizeof(BitmapInfo.bmiHeader);
-    BitmapInfo.bmiHeader.biWidth = Width;
-    BitmapInfo.bmiHeader.biHeight = Height;
+    BitmapInfo.bmiHeader.biWidth = BitmapWidth;
+    //Since memory is 1D, and we need to render the pixels in 2D, we need to decide how to change rows.
+    //We set BitmapHeight to negative, allowing us to top-down DIB with origin at upper-left corner.
+    BitmapInfo.bmiHeader.biHeight = -BitmapHeight;
     BitmapInfo.bmiHeader.biPlanes = 1;
+    //biBitCount will be set to 32 due to alignment reasons, even though we only need 1 byte each for RGB, thus we include an extra byte of padding
     BitmapInfo.bmiHeader.biBitCount = 32;
     BitmapInfo.bmiHeader.biCompression = BI_RGB;
 
-    //We have something we want to blt to the screen, we have to make the DeviceContext compatible with the screen's DeviceContext even though we are not drawing to the screen's DeviceContext
-
-    //Allocate bitmap memory
-    BitmapHandle = CreateDIBSection(BitmapDeviceContext, &BitmapInfo, DIB_RGB_COLORS, &BitmapMemory, 0, 0);
     
+    int BytesPerPixel = 4;
+    int BitmapMemorySize = (BitmapWidth*BitmapHeight)*BytesPerPixel;
+    //Parameters of VirtualAlloc(1, 2, 3 ,4)
+    //1) The starting address of the region to allocate as virtual memory. Can be anywhere.
+    //2) Rounds up allocated memory to match page size.
+    //3) MEM_COMMIT = Start using the memory right away, MEM_RESERVE = We're going to reserve memory to be used in the future.
+    //4) PAGE_READWRITE = We're both reading from and writing to the memory
+    BitmapMemory = VirtualAlloc(0, BitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
+
+    int Pitch = Width*BytesPerPixel;
+    uint8 *Row = (uint8 *)BitmapMemory;
+    for(int Y = 0; Y < BitmapHeight; ++Y)
+    {
+        uint8 *Pixel = (uint8 *)Row;
+        for(int X = 0; X < BitmapWidth; ++X)
+        {
+            *Pixel = 255; 
+            ++Pixel;
+            *Pixel = 0;
+            ++Pixel;
+            *Pixel = 0;
+            ++Pixel;
+            *Pixel = 0;
+            ++Pixel;
+        }
+
+        Row += Pitch;
+    }
 }
 
 //Rectangle to rectangle copy, scaling due to differing sizes
-internal void Win32UpdateWindow(HDC DeviceContext, int X, int Y, int Width, int Height)
+internal void Win32UpdateWindow(HDC DeviceContext, RECT *WindowRect, int X, int Y, int Width, int Height)
 {
+    int WindowWidth = WindowRect->right - WindowRect->left;
+    int WindowHeight = WindowRect->bottom - WindowRect->top;
     StretchDIBits(DeviceContext, 
+                /*
                 X, Y, Width, Height,
                 X, Y, Width, Height,
+                */
+               0, 0, BitmapWidth, BitmapHeight,
+               0, 0, WindowWidth, WindowHeight,
                 BitmapMemory,
                 &BitmapInfo,
                 DIB_RGB_COLORS,
                 SRCCOPY);
 }
                                 
-                                
-
-                                
-
-
+                
 //In windows, function signatures only depend on the types you are trying to pass, not the actual name of the parameter. You can rename it however you like.
 //This is a function that will be called when windows needs to send us a message
 LRESULT Win32MainWindowCallback(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
@@ -111,9 +140,9 @@ LRESULT Win32MainWindowCallback(HWND Window, UINT Message, WPARAM WParam, LPARAM
             int Y = Paint.rcPaint.top;
             int Height = Paint.rcPaint.bottom - Paint.rcPaint.top;
             int Width = Paint.rcPaint.right - Paint.rcPaint.left;
-            Win32UpdateWindow(DeviceContext, X, Y, Width, Height);
-            PatBlt(DeviceContext, X, Y, Width, Height, WHITENESS);
-
+            RECT ClientRect;
+            GetClientRect(Window, &ClientRect);
+            Win32UpdateWindow(DeviceContext, &ClientRect,X, Y, Width, Height);
             EndPaint(Window, &Paint);
         } break;
 

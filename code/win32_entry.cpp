@@ -27,6 +27,37 @@ global_variable BITMAPINFO BitmapInfo;
 global_variable void *BitmapMemory;
 global_variable int BitmapWidth;
 global_variable int BitmapHeight;
+global_variable int BytesPerPixel = 4;
+
+internal void RenderWeirdGradient(int XOffset, int YOffset)
+{
+    int Width = BitmapWidth;
+    int Height = BitmapHeight;
+
+    int Pitch = Width*BytesPerPixel;
+    uint8 *Row = (uint8 *)BitmapMemory;
+    for(int Y = 0; Y < BitmapHeight; ++Y)
+    {
+        uint32 *Pixel = (uint32 *)Row;
+        for(int X = 0; X < BitmapWidth; ++X)
+        {
+            //The (Padding)RGB channels are BGR(Padding) in Windows
+            /*
+            32 bit Memory: BB GG RR xx
+            32 bit Register: xx RR GG BB 
+            */
+
+            uint8 Blue= (X + XOffset);
+            uint8 Green = (Y + YOffset);
+            uint8 Red = 0;
+            uint8 Padding = 0;
+
+            *Pixel++ = ((Padding << 24) | (Red << 16) | (Green << 8) | Blue );
+        }
+
+        Row += Pitch;
+    }
+}
   
 //Create backbuffer
 internal void Win32ResizeDIBSection(int Width, int Height)
@@ -50,7 +81,6 @@ internal void Win32ResizeDIBSection(int Width, int Height)
     BitmapInfo.bmiHeader.biCompression = BI_RGB;
 
     
-    int BytesPerPixel = 4;
     int BitmapMemorySize = (BitmapWidth*BitmapHeight)*BytesPerPixel;
     //Parameters of VirtualAlloc(1, 2, 3 ,4)
     //1) The starting address of the region to allocate as virtual memory. Can be anywhere.
@@ -59,32 +89,15 @@ internal void Win32ResizeDIBSection(int Width, int Height)
     //4) PAGE_READWRITE = We're both reading from and writing to the memory
     BitmapMemory = VirtualAlloc(0, BitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
 
-    int Pitch = Width*BytesPerPixel;
-    uint8 *Row = (uint8 *)BitmapMemory;
-    for(int Y = 0; Y < BitmapHeight; ++Y)
-    {
-        uint8 *Pixel = (uint8 *)Row;
-        for(int X = 0; X < BitmapWidth; ++X)
-        {
-            *Pixel = 255; 
-            ++Pixel;
-            *Pixel = 0;
-            ++Pixel;
-            *Pixel = 0;
-            ++Pixel;
-            *Pixel = 0;
-            ++Pixel;
-        }
+    //TODO(Robin) probably clear this to black
 
-        Row += Pitch;
-    }
 }
 
 //Rectangle to rectangle copy, scaling due to differing sizes
-internal void Win32UpdateWindow(HDC DeviceContext, RECT *WindowRect, int X, int Y, int Width, int Height)
+internal void Win32UpdateWindow(HDC DeviceContext, RECT *ClientRect, int X, int Y, int Width, int Height)
 {
-    int WindowWidth = WindowRect->right - WindowRect->left;
-    int WindowHeight = WindowRect->bottom - WindowRect->top;
+    int WindowWidth = ClientRect->right - ClientRect->left;
+    int WindowHeight = ClientRect->bottom - ClientRect->top;
     StretchDIBits(DeviceContext, 
                 /*
                 X, Y, Width, Height,
@@ -168,7 +181,7 @@ int WINAPI WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PSTR CommandLine,
         if(RegisterClassA(&WindowClass))
         {
             //We open a window
-            HWND WindowHandle = CreateWindowExA(
+            HWND Window = CreateWindowExA(
                 0,
                 WindowClass.lpszClassName,
                 "Midnight Madness",
@@ -183,27 +196,42 @@ int WINAPI WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PSTR CommandLine,
                 0);
 
             //If windows returns control to us..
-            if(WindowHandle)
+            if(Window)
             {
+                int XOffset = 0;
+                int YOffset = 0;
                 //We enter an infinite loop
                 Running = true;
                 while(Running)
                 {
-                    //We ask windows to give us the next message in the message queue
+                    
+                    //We process messages as long as there are messages in the queue
                     MSG Message;
-                    BOOL MessageResult = GetMessage(&Message, 0, 0, 0);
-                    //If we get a new message (no WM_QUIT or error, for example)..
-                    if(MessageResult > 0)
+                    while(PeekMessageA(&Message, 0, 0, 0, PM_REMOVE))
                     {
+                        if(Message.message == WM_QUIT)
+                        {
+                            Running = false;
+                        }
+
+                    //If we get a new message (no WM_QUIT or error, for example)..
+                    
                         //We tell windows to process the message
                         TranslateMessage(&Message);
                         //We tell windows to dispatch the message to MainWindowCallback, windows wants to be the one who dispatches
                         DispatchMessage(&Message);
                     }
-                    else
-                    {
-                        break;
-                    }
+                    RenderWeirdGradient(XOffset, YOffset);
+
+                    HDC DeviceContext = GetDC(Window);
+                    RECT ClientRect;
+                    GetClientRect(Window, &ClientRect);
+                    int WindowHeight = ClientRect.bottom - ClientRect.top;
+                    int WindowWidth = ClientRect.right - ClientRect.left;
+                    Win32UpdateWindow(DeviceContext, &ClientRect, 0, 0, WindowWidth, WindowHeight);
+                    ReleaseDC(Window, DeviceContext);
+
+                    ++XOffset;
                 }
             }
 

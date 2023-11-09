@@ -9,9 +9,13 @@
 
 #include <windows.h>
 #include <stdio.h>
+#include <dsound.h>
 
 //Local persists should only be used for debugging
 //Internal = only this source file (translation unit) can modify the value
+
+typedef short int16;
+typedef int int32;
 
 typedef unsigned char uint8;
 typedef unsigned int uint32;
@@ -20,6 +24,9 @@ typedef int bool32;
 #define local_persist static
 #define internal static
 #define global_variable static
+
+#define DIRECT_SOUND_CREATE(name) HRESULT WINAPI name(LPCGUID lpGUID, LPDIRECTSOUND *ppDS, LPUNKNOWN pUnkOuter)
+typedef DIRECT_SOUND_CREATE(direct_sound_create);
 
 
 
@@ -40,6 +47,85 @@ struct win32_window_dimension
     int Width;
     int Height;
 };
+
+internal void Win32InitDSound(HWND Window, int32 SamplesPerSecond, int32 BufferSize)
+{
+    HMODULE DSoundLibrary = LoadLibraryA("dsound.dll");
+
+    if (DSoundLibrary)
+    {
+        direct_sound_create *DirectSoundCreate = (direct_sound_create *)GetProcAddress(DSoundLibrary, "DirectSoundCreate");
+
+        LPDIRECTSOUND DirectSound;
+
+        if (DirectSoundCreate && SUCCEEDED(DirectSoundCreate(0, &DirectSound, 0)))
+        {
+            tWAVEFORMATEX WaveFormat = {};
+            WaveFormat.wFormatTag = WAVE_FORMAT_PCM;
+            WaveFormat.nChannels = 2;
+            WaveFormat.nSamplesPerSec = SamplesPerSecond;
+            WaveFormat.nBlockAlign = WaveFormat.nChannels*WaveFormat.wBitsPerSample / 8;
+            WaveFormat.nAvgBytesPerSec = WaveFormat.nSamplesPerSec*WaveFormat.nBlockAlign;
+            WaveFormat.wBitsPerSample = 16;
+            WaveFormat.cbSize = 0;
+
+            if(SUCCEEDED(DirectSound -> SetCooperativeLevel(Window, DSSCL_PRIORITY)))
+            {
+                //Initializes the size of the BufferDescription to zero
+                DSBUFFERDESC BufferDescription = {};
+                BufferDescription.dwSize = sizeof(BufferDescription);
+                BufferDescription.dwFlags = DSBCAPS_PRIMARYBUFFER;
+
+                //Create a primary buffer
+                LPDIRECTSOUNDBUFFER PrimaryBuffer;
+                if SUCCEEDED((DirectSound -> CreateSoundBuffer(&BufferDescription, &PrimaryBuffer, 0)))
+                {
+                    //What should the graph of the sound look like
+                    
+                   if(SUCCEEDED(PrimaryBuffer->SetFormat(&WaveFormat)))
+                   {
+                   }
+                   else
+                   {
+                    //TODO(Robin) Diagnostics
+                   }
+                }
+                else
+                {
+
+                }
+            }
+            else
+            {
+                //TODO/Robin Diagnostic
+            }
+        
+            DSBUFFERDESC BufferDescription = {};
+            BufferDescription.dwSize = sizeof(BufferDescription);
+            BufferDescription.dwFlags = 0;
+            BufferDescription.dwFlags = BufferSize;
+            BufferDescription.lpwfxFormat = &WaveFormat;
+            LPDIRECTSOUNDBUFFER SecondaryBuffer;
+            if SUCCEEDED((DirectSound -> CreateSoundBuffer(&BufferDescription, &SecondaryBuffer, 0)))
+                {
+                    //What should the graph of the sound look like
+                    
+                   if(SUCCEEDED(SecondaryBuffer->SetFormat(&WaveFormat)))
+                   {
+
+                   }
+                   else
+                   {
+                    //TODO(Robin) Diagnostics
+                   }
+            }
+            else
+            {
+                //TODO(Robin) Diagntostic
+            }
+        }
+    }
+}
 
 internal win32_window_dimension GetWindowDimension(HWND Window)
 {
@@ -301,6 +387,8 @@ int WINAPI WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PSTR CommandLine,
                 int XOffset = 0;
                 int YOffset = 0;
                 //We enter an infinite loop
+                Win32InitDSound(Window, 48000, 48000*sizeof(int16)*2);
+
                 GlobalRunning = true;
                 while(GlobalRunning)
                 {

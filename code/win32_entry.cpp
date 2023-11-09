@@ -15,12 +15,12 @@
 
 typedef unsigned char uint8;
 typedef unsigned int uint32;
+typedef int bool32;
 
 #define local_persist static
 #define internal static
 #define global_variable static
 
-//Statics are initialized to zero by default
 
 
 struct win32_offscreen_buffer
@@ -29,11 +29,10 @@ struct win32_offscreen_buffer
     void *Memory;
     int Width;
     int Height;
-    int BytesPerPixel;
     int Pitch;
 };
 
-global_variable bool Running;
+global_variable bool GlobalRunning;
 global_variable win32_offscreen_buffer GlobalBackbuffer;
 
 struct win32_window_dimension
@@ -42,7 +41,7 @@ struct win32_window_dimension
     int Height;
 };
 
-win32_window_dimension GetWindowDimension(HWND Window)
+internal win32_window_dimension GetWindowDimension(HWND Window)
 {
     win32_window_dimension Result;
 
@@ -55,16 +54,16 @@ win32_window_dimension GetWindowDimension(HWND Window)
 };
 
 
-internal void RenderWeirdGradient(win32_offscreen_buffer Buffer, int XOffset, int YOffset)
+internal void RenderWeirdGradient(win32_offscreen_buffer *Buffer, int XOffset, int YOffset)
 {
-    int Width = Buffer.Width;
-    int Height = Buffer.Height;
+    int Width = Buffer->Width;
+    int Height = Buffer->Height;
 
-    uint8 *Row = (uint8 *)Buffer.Memory;
-    for(int Y = 0; Y < Buffer.Height; ++Y)
+    uint8 *Row = (uint8 *)Buffer->Memory;
+    for(int Y = 0; Y < Buffer->Height; ++Y)
     {
         uint32 *Pixel = (uint32 *)Row;
-        for(int X = 0; X < Buffer.Width; ++X)
+        for(int X = 0; X < Buffer->Width; ++X)
         {
             //The (Padding)RGB channels are BGR(Padding) in Windows
             /*
@@ -80,7 +79,7 @@ internal void RenderWeirdGradient(win32_offscreen_buffer Buffer, int XOffset, in
             *Pixel++ = ((Padding << 24) | (Red << 16) | (Green << 8) | Blue );
         }
 
-        Row += Buffer.Pitch;
+        Row += Buffer->Pitch;
     }
 }
   
@@ -94,7 +93,7 @@ internal void Win32ResizeDIBSection(win32_offscreen_buffer *Buffer, int Width, i
 
     Buffer->Width = Width;
     Buffer->Height = Height;
-    Buffer->BytesPerPixel = 4;
+    int BytesPerPixel = 4;
 
     Buffer->Info.bmiHeader.biSize = sizeof(Buffer->Info.bmiHeader);
     Buffer->Info.bmiHeader.biWidth = Buffer->Width;
@@ -107,7 +106,7 @@ internal void Win32ResizeDIBSection(win32_offscreen_buffer *Buffer, int Width, i
     Buffer->Info.bmiHeader.biCompression = BI_RGB;
 
     
-    int BitmapMemorySize = (Buffer->Width*Buffer->Height)*Buffer->BytesPerPixel;
+    int BitmapMemorySize = (Buffer->Width*Buffer->Height)*BytesPerPixel;
     //Parameters of VirtualAlloc(1, 2, 3 ,4)
     //1) The starting address of the region to allocate as virtual memory. Can be anywhere.
     //2) Rounds up allocated memory to match page size.
@@ -115,23 +114,25 @@ internal void Win32ResizeDIBSection(win32_offscreen_buffer *Buffer, int Width, i
     //4) PAGE_READWRITE = We're both reading from and writing to the memory
     Buffer->Memory = VirtualAlloc(0, BitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
 
-    Buffer->Pitch = Width*Buffer->BytesPerPixel;
+    Buffer->Pitch = Width*BytesPerPixel;
     //TODO(Robin) probably clear this to black
 
 }
 
 //Rectangle to rectangle copy, scaling due to differing sizes
-internal void Win32DisplayBufferInWindow(HDC DeviceContext, int WindowWidth, int WindowHeight, win32_offscreen_buffer Buffer, int X, int Y, int Width, int Height)
+internal void Win32DisplayBufferInWindow(win32_offscreen_buffer *Buffer, HDC DeviceContext, int WindowWidth, int WindowHeight)
 {
+    //TODO(Robin) Aspect ratio correction
+    //TODO(Robin) Play with stretch modes
     StretchDIBits(DeviceContext, 
                 /*
                 X, Y, Width, Height,
                 X, Y, Width, Height,
                 */
-               0, 0, Buffer.Width, Buffer.Height,
                0, 0, WindowWidth, WindowHeight,
-                Buffer.Memory,
-                &Buffer.Info,
+               0, 0, Buffer->Width, Buffer->Height,
+                Buffer->Memory,
+                &Buffer->Info,
                 DIB_RGB_COLORS,
                 SRCCOPY);
 }
@@ -139,32 +140,106 @@ internal void Win32DisplayBufferInWindow(HDC DeviceContext, int WindowWidth, int
                 
 //In windows, function signatures only depend on the types you are trying to pass, not the actual name of the parameter. You can rename it however you like.
 //This is a function that will be called when windows needs to send us a message
-LRESULT Win32MainWindowCallback(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
+//WParam and LParam are anonymous parameters in different functions, their datatypes change based on the function
+//Message is used to decrypt what WParam and LParam are
+internal LRESULT Win32MainWindowCallback(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
 {
     LRESULT Result = 0;
     switch(Message)
     {
         case WM_SIZE:
         {
-            win32_window_dimension Dimension = GetWindowDimension(Window);
-            Win32ResizeDIBSection(&GlobalBackbuffer, Dimension.Width, Dimension.Height);
+
         } break;
     
         case WM_DESTROY:
         {
             //TODO(Robin) Handle this a error - recreate window?
-            Running = false;
+            GlobalRunning = false;
         } break;
 
         case WM_CLOSE:
         {
             //TODO(Robin) Handle this with a message to the user?
-            Running = false;
+            GlobalRunning = false;
         } break;
 
         case WM_ACTIVATEAPP:
         {
             OutputDebugStringA("WM_ACTIVATEAPP\n");
+        } break;
+
+        case WM_SYSKEYDOWN:
+        case WM_SYSKEYUP:
+        case WM_KEYDOWN:
+        case WM_KEYUP:
+        {
+            uint32 VKCode = WParam;
+            bool WasDown = ((LParam & (1 << 30)) != 0);
+            bool IsDown = ((LParam & (1 << 31)) == 0);
+            if(WasDown != IsDown)
+            {
+                if(VKCode == 'W')
+                {
+                    if(WasDown)
+                    {
+                        printf("Was down\n");
+                    }
+                    if(IsDown)
+                    {
+                        printf("Is down\n");
+                    }
+                }
+                else if(VKCode == 'A')
+                {
+
+                }
+                else if(VKCode == 'S')
+                {
+                    
+                }
+                else if(VKCode == 'D')
+                {
+                    
+                }
+                else if(VKCode == 'Q')
+                {
+                    
+                }
+                else if(VKCode == 'E')
+                {
+                    
+                }
+                else if(VKCode == VK_UP)
+                {
+                    
+                }
+                else if(VKCode == VK_LEFT)
+                {
+                    
+                }
+                else if(VKCode == VK_DOWN)
+                {
+                    
+                }
+                else if(VKCode == VK_RIGHT)
+                {
+                    
+                }
+                else if(VKCode == VK_ESCAPE)
+                {
+                    
+                }
+                else if(VKCode == VK_SPACE)
+                {
+                }
+            } 
+
+            bool32 AltKeyWasDown = (LParam & (1 << 29));
+            if(VKCode == VK_F4 && AltKeyWasDown)
+            {
+                GlobalRunning = false;
+            }
         } break;
 
         case WM_PAINT:
@@ -178,7 +253,7 @@ LRESULT Win32MainWindowCallback(HWND Window, UINT Message, WPARAM WParam, LPARAM
 
             win32_window_dimension Dimension = GetWindowDimension(Window);
 
-            Win32DisplayBufferInWindow(DeviceContext, Dimension.Width, Dimension.Height, GlobalBackbuffer, X, Y, Width, Height);
+            Win32DisplayBufferInWindow(&GlobalBackbuffer, DeviceContext, Dimension.Width, Dimension.Height);
             EndPaint(Window, &Paint);
         } break;
 
@@ -194,6 +269,8 @@ LRESULT Win32MainWindowCallback(HWND Window, UINT Message, WPARAM WParam, LPARAM
 int WINAPI WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PSTR CommandLine, int ShowCode)
 {
     WNDCLASSA WindowClass = {};
+
+            Win32ResizeDIBSection(&GlobalBackbuffer, 1280, 720);
     
         WindowClass.style = CS_HREDRAW|CS_VREDRAW;
         WindowClass.lpfnWndProc = Win32MainWindowCallback;
@@ -224,9 +301,10 @@ int WINAPI WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PSTR CommandLine,
                 int XOffset = 0;
                 int YOffset = 0;
                 //We enter an infinite loop
-                Running = true;
-                while(Running)
+                GlobalRunning = true;
+                while(GlobalRunning)
                 {
+                    HDC DeviceContext = GetDC(Window);
                     
                     //We process messages as long as there are messages in the queue
                     MSG Message;
@@ -234,7 +312,7 @@ int WINAPI WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PSTR CommandLine,
                     {
                         if(Message.message == WM_QUIT)
                         {
-                            Running = false;
+                            GlobalRunning = false;
                         }
 
                     //If we get a new message (no WM_QUIT or error, for example)..
@@ -244,12 +322,11 @@ int WINAPI WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PSTR CommandLine,
                         //We tell windows to dispatch the message to MainWindowCallback, windows wants to be the one who dispatches
                         DispatchMessage(&Message);
                     }
-                    RenderWeirdGradient(GlobalBackbuffer, XOffset, YOffset);
+                    RenderWeirdGradient(&GlobalBackbuffer, XOffset, YOffset);
 
-                    HDC DeviceContext = GetDC(Window);
                     win32_window_dimension Dimension = GetWindowDimension(Window);
-                    Win32DisplayBufferInWindow(DeviceContext, Dimension.Width, Dimension.Height, GlobalBackbuffer, 0, 0, Dimension.Width, Dimension.Height);
-                    
+                    Win32DisplayBufferInWindow(&GlobalBackbuffer, DeviceContext, Dimension.Width, Dimension.Height);
+
                     ReleaseDC(Window, DeviceContext);
                     ++XOffset;
                 }

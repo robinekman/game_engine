@@ -64,14 +64,15 @@ internal void Win32InitDSound(HWND Window, int32 SamplesPerSecond, int32 BufferS
             WaveFormat.wFormatTag = WAVE_FORMAT_PCM;
             WaveFormat.nChannels = 2;
             WaveFormat.nSamplesPerSec = SamplesPerSecond;
+            WaveFormat.wBitsPerSample = 16;
             WaveFormat.nBlockAlign = WaveFormat.nChannels*WaveFormat.wBitsPerSample / 8;
             WaveFormat.nAvgBytesPerSec = WaveFormat.nSamplesPerSec*WaveFormat.nBlockAlign;
-            WaveFormat.wBitsPerSample = 16;
             WaveFormat.cbSize = 0;
 
             if(SUCCEEDED(DirectSound -> SetCooperativeLevel(Window, DSSCL_PRIORITY)))
             {
                 //Initializes the size of the BufferDescription to zero
+                //The primary buffer acts as a handle to the primary sound device, so we can set its format, allowing the sound card to play in the format we want
                 DSBUFFERDESC BufferDescription = {};
                 BufferDescription.dwSize = sizeof(BufferDescription);
                 BufferDescription.dwFlags = DSBCAPS_PRIMARYBUFFER;
@@ -97,9 +98,10 @@ internal void Win32InitDSound(HWND Window, int32 SamplesPerSecond, int32 BufferS
             }
             else
             {
-                //TODO/Robin Diagnostic
+                //TODO(Robin) Diagnostic
             }
         
+            //This is the sound
             DSBUFFERDESC BufferDescription = {};
             BufferDescription.dwSize = sizeof(BufferDescription);
             BufferDescription.dwFlags = 0;
@@ -198,7 +200,7 @@ internal void Win32ResizeDIBSection(win32_offscreen_buffer *Buffer, int Width, i
     //2) Rounds up allocated memory to match page size.
     //3) MEM_COMMIT = Start using the memory right away, MEM_RESERVE = We're going to reserve memory to be used in the future.
     //4) PAGE_READWRITE = We're both reading from and writing to the memory
-    Buffer->Memory = VirtualAlloc(0, BitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
+    Buffer->Memory = VirtualAlloc(0, BitmapMemorySize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
 
     Buffer->Pitch = Width*BytesPerPixel;
     //TODO(Robin) probably clear this to black
@@ -359,7 +361,7 @@ int WINAPI WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PSTR CommandLine,
             Win32ResizeDIBSection(&GlobalBackbuffer, 1280, 720);
     
         WindowClass.style = CS_HREDRAW|CS_VREDRAW;
-        WindowClass.lpfnWndProc = Win32MainWindowCallback;
+        WindowClass.lpfnWndProc = (WNDPROC)Win32MainWindowCallback;
         WindowClass.hInstance = Instance;
         //HICON     hIcon;
         WindowClass.lpszClassName = "Midnight Madness";

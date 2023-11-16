@@ -10,9 +10,11 @@
 #include <windows.h>
 #include <stdio.h>
 #include <dsound.h>
+#include <math.h>
 
 //Local persists should only be used for debugging
 //Internal = only this source file (translation unit) can modify the value
+#define Pi32 3.14159265359f
 
 typedef short int16;
 typedef int int32;
@@ -20,6 +22,11 @@ typedef int int32;
 typedef unsigned char uint8;
 typedef unsigned int uint32;
 typedef int bool32;
+
+typedef float float32;
+typedef double float64;
+
+
 
 #define local_persist static
 #define internal static
@@ -41,12 +48,69 @@ struct win32_offscreen_buffer
 
 global_variable bool GlobalRunning;
 global_variable win32_offscreen_buffer GlobalBackbuffer;
+global_variable LPDIRECTSOUNDBUFFER GlobalSecondaryBuffer;
+
 
 struct win32_window_dimension
 {
     int Width;
     int Height;
 };
+
+struct win32_sound_output
+{
+    int SamplesPerSecond;
+    int ToneHz;
+    uint32 RunningSampleIndex;
+    int WavePeriod;
+    //int HalfWavePeriod = WavePeriod/2;
+    int BytesPerSample;
+    int SecondaryBufferSize;
+    int ToneVolume;
+};
+
+internal void Win32FillSoundBuffer(win32_sound_output *SoundOutput, DWORD ByteToLock, DWORD BytesToWrite)
+{
+    VOID *Region1;
+    DWORD Region1Size;
+    VOID *Region2;
+    DWORD Region2Size;
+
+    //Goes on forever
+
+    if(SUCCEEDED(GlobalSecondaryBuffer->Lock(ByteToLock, BytesToWrite, &Region1, &Region1Size, &Region2, &Region2Size, 0)))
+    {
+    //TODO(Robin) assert that Region1Size and Region2Size are valid
+
+        DWORD Region1SampleCount = Region1Size/SoundOutput->BytesPerSample;
+        int16 *SampleOut = (int16 *)Region1;
+        for(DWORD SampleIndex = 0; SampleIndex < Region1SampleCount; ++SampleIndex)
+        {
+            float32 t = 2.0f*Pi32*(float32)SoundOutput->RunningSampleIndex / (float32)SoundOutput->WavePeriod;
+            float32 SineValue = sinf(t);
+            int16 SampleValue = (int16)(SineValue*SoundOutput->ToneVolume);
+            *SampleOut++ = SampleValue;
+            *SampleOut++ = SampleValue;
+            ++SoundOutput->RunningSampleIndex;
+        }
+
+        DWORD Region2SampleCount = Region2Size/SoundOutput->BytesPerSample;
+        SampleOut = (int16 *)Region2;
+        for(DWORD SampleIndex = 0; SampleIndex < Region2SampleCount; ++SampleIndex)
+        {
+            float32 t = 2.0f*Pi32*(float32)SoundOutput->RunningSampleIndex / (float32)SoundOutput->WavePeriod;
+            float32 SineValue = sinf(t);
+            int16 SampleValue = (int16)(SineValue*SoundOutput->ToneVolume);
+            *SampleOut++ = SampleValue;
+            *SampleOut++ = SampleValue;
+            ++SoundOutput->RunningSampleIndex;
+        }
+
+        GlobalSecondaryBuffer->Unlock(Region1, Region1Size, Region2, Region2Size);
+    }
+}
+
+
 
 internal void Win32InitDSound(HWND Window, int32 SamplesPerSecond, int32 BufferSize)
 {
@@ -65,7 +129,7 @@ internal void Win32InitDSound(HWND Window, int32 SamplesPerSecond, int32 BufferS
             WaveFormat.nChannels = 2;
             WaveFormat.nSamplesPerSec = SamplesPerSecond;
             WaveFormat.wBitsPerSample = 16;
-            WaveFormat.nBlockAlign = WaveFormat.nChannels*WaveFormat.wBitsPerSample / 8;
+            WaveFormat.nBlockAlign = (WaveFormat.nChannels*WaveFormat.wBitsPerSample) / 8;
             WaveFormat.nAvgBytesPerSec = WaveFormat.nSamplesPerSec*WaveFormat.nBlockAlign;
             WaveFormat.cbSize = 0;
 
@@ -93,7 +157,6 @@ internal void Win32InitDSound(HWND Window, int32 SamplesPerSecond, int32 BufferS
                 }
                 else
                 {
-
                 }
             }
             else
@@ -105,14 +168,14 @@ internal void Win32InitDSound(HWND Window, int32 SamplesPerSecond, int32 BufferS
             DSBUFFERDESC BufferDescription = {};
             BufferDescription.dwSize = sizeof(BufferDescription);
             BufferDescription.dwFlags = 0;
-            BufferDescription.dwFlags = BufferSize;
+            BufferDescription.dwBufferBytes = BufferSize;
             BufferDescription.lpwfxFormat = &WaveFormat;
-            LPDIRECTSOUNDBUFFER SecondaryBuffer;
-            if SUCCEEDED((DirectSound -> CreateSoundBuffer(&BufferDescription, &SecondaryBuffer, 0)))
+
+            if SUCCEEDED((DirectSound -> CreateSoundBuffer(&BufferDescription, &GlobalSecondaryBuffer, 0)))
                 {
                     //What should the graph of the sound look like
                     
-                   if(SUCCEEDED(SecondaryBuffer->SetFormat(&WaveFormat)))
+                   if(SUCCEEDED(GlobalSecondaryBuffer->SetFormat(&WaveFormat)))
                    {
 
                    }
@@ -124,6 +187,7 @@ internal void Win32InitDSound(HWND Window, int32 SamplesPerSecond, int32 BufferS
             else
             {
                 //TODO(Robin) Diagntostic
+
             }
         }
     }
@@ -358,75 +422,123 @@ int WINAPI WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PSTR CommandLine,
 {
     WNDCLASSA WindowClass = {};
 
-            Win32ResizeDIBSection(&GlobalBackbuffer, 1280, 720);
-    
-        WindowClass.style = CS_HREDRAW|CS_VREDRAW;
-        WindowClass.lpfnWndProc = (WNDPROC)Win32MainWindowCallback;
-        WindowClass.hInstance = Instance;
-        //HICON     hIcon;
-        WindowClass.lpszClassName = "Midnight Madness";
-    
-        if(RegisterClassA(&WindowClass))
+    Win32ResizeDIBSection(&GlobalBackbuffer, 1280, 720);
+
+    WindowClass.style = CS_HREDRAW|CS_VREDRAW;
+    WindowClass.lpfnWndProc = Win32MainWindowCallback;
+    WindowClass.hInstance = Instance;
+    //HICON     hIcon;
+    WindowClass.lpszClassName = "Midnight Madness";
+
+    if(RegisterClassA(&WindowClass))
+    {
+        //We open a window
+        HWND Window = CreateWindowExA(
+            0,
+            WindowClass.lpszClassName,
+            "Midnight Madness",
+            WS_OVERLAPPEDWINDOW|WS_VISIBLE,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            0,
+            0,
+            Instance,
+            0);
+
+        //If windows returns control to us..
+        if(Window)
         {
-            //We open a window
-            HWND Window = CreateWindowExA(
-                0,
-                WindowClass.lpszClassName,
-                "Midnight Madness",
-                WS_OVERLAPPEDWINDOW|WS_VISIBLE,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                0,
-                0,
-                Instance,
-                0);
+            HDC DeviceContext = GetDC(Window);
 
-            //If windows returns control to us..
-            if(Window)
+            //Graphics test
+            int XOffset = 0;
+            int YOffset = 0;
+
+            win32_sound_output SoundOutput = {};
+            
+            SoundOutput.SamplesPerSecond = 48000;
+            SoundOutput.ToneHz = 256;
+            SoundOutput.RunningSampleIndex = 0;
+            SoundOutput.WavePeriod = SoundOutput.SamplesPerSecond/SoundOutput.ToneHz;
+            SoundOutput.BytesPerSample = sizeof(int16)*2;
+            SoundOutput.SecondaryBufferSize = SoundOutput.SamplesPerSecond*SoundOutput.BytesPerSample;
+            SoundOutput.ToneVolume = 1000;
+            Win32InitDSound(Window, SoundOutput.SamplesPerSecond, SoundOutput.SecondaryBufferSize);
+            Win32FillSoundBuffer(&SoundOutput, 0, SoundOutput.SecondaryBufferSize);
+            GlobalSecondaryBuffer->Play(0, 0, DSBPLAY_LOOPING);
+
+
+            bool SoundIsPlaying = false;
+            //We enter an infinite loop
+            GlobalRunning = true;
+            while(GlobalRunning)
             {
-                int XOffset = 0;
-                int YOffset = 0;
-                //We enter an infinite loop
-                Win32InitDSound(Window, 48000, 48000*sizeof(int16)*2);
-
-                GlobalRunning = true;
-                while(GlobalRunning)
+                
+                //We process messages as long as there are messages in the queue
+                MSG Message;
+                while(PeekMessageA(&Message, 0, 0, 0, PM_REMOVE))
                 {
-                    HDC DeviceContext = GetDC(Window);
-                    
-                    //We process messages as long as there are messages in the queue
-                    MSG Message;
-                    while(PeekMessageA(&Message, 0, 0, 0, PM_REMOVE))
+                    if(Message.message == WM_QUIT)
                     {
-                        if(Message.message == WM_QUIT)
-                        {
-                            GlobalRunning = false;
-                        }
-
-                    //If we get a new message (no WM_QUIT or error, for example)..
-                    
-                        //We tell windows to process the message
-                        TranslateMessage(&Message);
-                        //We tell windows to dispatch the message to MainWindowCallback, windows wants to be the one who dispatches
-                        DispatchMessage(&Message);
+                        GlobalRunning = false;
                     }
-                    RenderWeirdGradient(&GlobalBackbuffer, XOffset, YOffset);
 
-                    win32_window_dimension Dimension = GetWindowDimension(Window);
-                    Win32DisplayBufferInWindow(&GlobalBackbuffer, DeviceContext, Dimension.Width, Dimension.Height);
-
-                    ReleaseDC(Window, DeviceContext);
-                    ++XOffset;
+                //If we get a new message (no WM_QUIT or error, for example)..
+                
+                    //We tell windows to process the message
+                    TranslateMessage(&Message);
+                    //We tell windows to dispatch the message to MainWindowCallback, windows wants to be the one who dispatches
+                    DispatchMessage(&Message);
                 }
-            }
+                RenderWeirdGradient(&GlobalBackbuffer, XOffset, YOffset);
 
-            else
-            {
-                        //TODO(Robin): Logging
+                DWORD PlayCursor;
+                DWORD WriteCursor;
+
+
+                if(SUCCEEDED(GlobalSecondaryBuffer->GetCurrentPosition(&PlayCursor, &WriteCursor)))
+                {
+                    DWORD ByteToLock = (SoundOutput.RunningSampleIndex*SoundOutput.BytesPerSample) % SoundOutput.SecondaryBufferSize;
+                    DWORD BytesToWrite;
+
+                    if(ByteToLock == PlayCursor)
+                    {
+                        BytesToWrite = 0;
+                    }
+                    else if(ByteToLock > PlayCursor)
+                    {
+                        BytesToWrite = SoundOutput.SecondaryBufferSize-ByteToLock;
+                        BytesToWrite += PlayCursor;
+                    }
+                    else
+                    {
+                        BytesToWrite = PlayCursor - ByteToLock;
+                    }
+
+                    Win32FillSoundBuffer(&SoundOutput, ByteToLock, BytesToWrite);
+                }
+
+                if(!SoundIsPlaying)
+                {
+                    GlobalSecondaryBuffer->Play(0,0,DSBPLAY_LOOPING);
+                    SoundIsPlaying = true;
+                }
+
+                win32_window_dimension Dimension = GetWindowDimension(Window);
+                Win32DisplayBufferInWindow(&GlobalBackbuffer, DeviceContext, Dimension.Width, Dimension.Height);
+
+                ++XOffset;
             }
+                ReleaseDC(Window, DeviceContext);
         }
 
-        return 0;
+        else
+        {
+                    //TODO(Robin): Logging
+        }
     }
+
+    return 0;
+}

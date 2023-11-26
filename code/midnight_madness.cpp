@@ -1,7 +1,24 @@
 #include "midnight_madness.h"
 
+internal void GameOutputSound(game_sound_output_buffer *SoundBuffer, int ToneHz)
+{
+    local_persist float32 tSine;
+    int16 ToneVolume = 3000;
+    int WavePeriod = SoundBuffer->SamplesPerSecond/ToneHz;
 
-internal void GameUpdateAndRender(game_offscreen_buffer *Buffer, int XOffset, int YOffset)
+    int16 *SampleOut = SoundBuffer->Samples;
+
+    for(int i = 0; i < SoundBuffer->SampleCount; ++i)
+    {
+        float32 SineValue = sinf(tSine);
+        int16 SampleValue = (int16)(SineValue * ToneVolume);
+        *SampleOut++ = SampleValue;
+        *SampleOut++ = SampleValue;
+
+        tSine += 2.0f * Pi32 * 1.0f / (float32)WavePeriod;
+    }
+}
+internal void RenderWeirdGradient(game_offscreen_buffer *Buffer, int XOffset, int YOffset)
 {
     int Width = Buffer->Width;
     int Height = Buffer->Height;
@@ -28,4 +45,10 @@ internal void GameUpdateAndRender(game_offscreen_buffer *Buffer, int XOffset, in
 
         Row += Buffer->Pitch;
     }
+}
+
+internal void GameUpdateAndRender(game_offscreen_buffer *Buffer, int XOffset, int YOffset, game_sound_output_buffer *SoundBuffer, int ToneHz)
+{
+    GameOutputSound(SoundBuffer, ToneHz);
+    RenderWeirdGradient(Buffer, XOffset, YOffset);
 }

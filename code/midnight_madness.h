@@ -33,7 +33,14 @@ struct game_offscreen_buffer
     int Pitch;
 };
 
-internal void GameUpdateAndRender(game_offscreen_buffer *Buffer, int XOffset, int YOffset);
+struct game_sound_output_buffer
+{
+    int SamplesPerSecond;
+    int SampleCount;
+    int16 *Samples;
+};
+
+internal void GameUpdateAndRender(game_offscreen_buffer *Buffer, int XOffset, int YOffset, game_sound_output_buffer *SoundBuffer, int ToneHz);
 
 #define MIDNIGHT_MADNESS_H
 #endif
